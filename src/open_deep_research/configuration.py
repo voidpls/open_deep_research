@@ -210,6 +210,26 @@ class Configuration(BaseModel):
             }
         }
     )
+    structured_model: str = Field(
+        default="openai:gpt-4.1-mini",
+        metadata={
+            "x_oap_ui_config": {
+                "type": "text",
+                "default": "openai:gpt-4.1-mini",
+                "description": "Model for structured output nodes (clarify, research brief)"
+            }
+        }
+    )
+    structured_model_max_tokens: int = Field(
+        default=10000,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "number",
+                "default": 10000,
+                "description": "Maximum output tokens for structured model"
+            }
+        }
+    )
     # MCP server configuration
     mcp_config: Optional[MCPConfig] = Field(
         default=None,
