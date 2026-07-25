@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Literal, Optional
@@ -797,6 +798,11 @@ MODEL_TOKEN_LIMITS = {
     "openai:o3-pro": 200000,
     "openai:o1": 200000,
     "openai:o1-pro": 200000,
+    "openai:qwen3.7-plus": 131072,
+    "openai:qwen3.7-max": 131072,
+    "openai:minimax-m3": 524288,
+    "openai:mimo-v2.5": 524288,
+    "openai:deepseek-v4-flash": 524288,
     "anthropic:claude-opus-4": 200000,
     "anthropic:claude-sonnet-4": 200000,
     "anthropic:claude-3-7-sonnet": 200000,
@@ -877,6 +883,14 @@ def get_today_str() -> str:
     """
     now = datetime.now()
     return f"{now:%a} {now:%b} {now.day}, {now:%Y}"
+
+_THINK_BLOCK_RE = re.compile(r"<think>\s*.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+
+def strip_think_tags(text: str) -> str:
+    """Remove MiniMax interleaved thinking blocks from model text."""
+    if not text:
+        return text
+    return _THINK_BLOCK_RE.sub("", text).lstrip()
 
 def get_config_value(value):
     """Extract value from configuration, handling enums and None values."""
