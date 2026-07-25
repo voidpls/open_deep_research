@@ -225,7 +225,7 @@ compress_research_simple_human_message = """All above messages are about researc
 
 DO NOT summarize the information. I want the raw information returned, just in a cleaner format. Make sure all relevant information is preserved - you can rewrite findings verbatim."""
 
-final_report_generation_prompt = """Based on all the research conducted, create a comprehensive, well-structured answer to the overall research brief:
+final_report_generation_prompt = """Based on all the research conducted, create a well-structured answer to the overall research brief:
 <Research Brief>
 {research_brief}
 </Research Brief>
@@ -246,20 +246,24 @@ Here are the findings from the research that you conducted:
 </Findings>
 
 Please create a detailed answer to the overall research brief that:
-1. Is well-organized with proper headings (# for title, ## for sections, ### for subsections)
-2. Includes specific facts and insights from the research
-3. References relevant sources using [Title](URL) format
-4. Provides a balanced, thorough analysis. Be as comprehensive as possible, and include all information that is relevant to the overall research question. People are using you for deep research and will expect detailed, comprehensive answers.
-5. Includes a "Sources" section at the end with all referenced links
+1. LEADS WITH THE ANSWER. Open with a direct, specific answer to the actual question asked, in 2-5 sentences, before any background or structure. If the question has multiple parts, answer each part up front. A reader who stops after the first paragraph should still have their question answered.
+2. Is well-organized with proper headings (# for title, ## for sections, ### for subsections)
+3. Includes specific facts and insights from the research
+4. References relevant sources using [Title](URL) format
+5. Is PROPORTIONATE to the question. Match length and depth to what was asked: a specific question gets a focused answer (roughly 500-1500 words); a broad survey, explainer, or "comprehensive overview" request gets a long-form report. Do not pad a specific question into an encyclopedia article, and do not give a shallow answer to a request for depth. Omit background sections, history, and context the user did not ask for unless they are necessary to understand the answer.
+6. Includes a "Sources" section at the end with all referenced links
 
 You can structure your report in a number of different ways. Here are some examples:
 
+To answer a specific question, lead with the answer, then give only the supporting detail needed:
+1/ direct answer
+2/ key evidence and reasoning
+3/ caveats or open points (only if they exist)
+
 To answer a question that asks you to compare two things, you might structure your report like this:
-1/ intro
-2/ overview of topic A
-3/ overview of topic B
-4/ comparison between A and B
-5/ conclusion
+1/ verdict up front
+2/ comparison between A and B on the criteria that matter
+3/ when A is the better choice, when B is
 
 To answer a question that asks you to return a list of things, you might only need a single section which is the entire list.
 1/ list of things or table of things
@@ -284,9 +288,9 @@ Make sure that your sections are cohesive, and make sense for the reader.
 For each section of the report, do the following:
 - Use simple, clear language
 - Use ## for section title (Markdown format) for each section of the report
-- Do NOT ever refer to yourself as the writer of the report. This should be a professional report without any self-referential language. 
+- Do NOT ever refer to yourself as the writer of the report. This should be a professional report without any self-referential language.
 - Do not say what you are doing in the report. Just write the report without any commentary from yourself.
-- Each section should be as long as necessary to deeply answer the question with the information you have gathered. It is expected that sections will be fairly long and verbose. You are writing a deep research report, and users will expect a thorough answer.
+- Each section should be exactly as long as the question requires — no longer. Density over length: every sentence should carry information the user asked for or needs to understand the answer.
 - Use bullet points to list out information when appropriate, but by default, write in paragraph form.
 
 REMEMBER:
