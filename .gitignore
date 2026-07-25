@@ -26,6 +26,7 @@ wheels/
 
 # Virtual environments
 venv/
+.venv/
 env/
 ENV/
 .env
@@ -61,6 +62,9 @@ node_modules/
 
 # LangGraph specific
 .langgraph/
+
+# Generated report contents
+reports/*
 
 # Temporary files
 tmp/
