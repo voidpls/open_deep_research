@@ -1,0 +1,1 @@
+Give me a comprehensive overview of the current state of solid-state batteries for electric vehicles: the main chemistry approaches, which companies are furthest along (Toyota, QuantumScape, Samsung SDI, CATL, others), realistic mass-market timelines, and the remaining technical obstacles. This is for a long-form explainer I'm writing.

@@ -1,0 +1,1 @@
+I'm starting a new CLI tool project in TypeScript and need to pick a runtime: Node.js, Deno, or Bun. Compare them on startup speed, single-binary distribution, npm compatibility, and stability for a tool I'll distribute to end users. Give me a concrete recommendation with reasoning, not a wishy-washy "it depends".

@@ -1,0 +1,1 @@
+Which company manufactures the PPG heart-rate sensors used in the Oura Ring, and what other consumer wearables use sensors from the same manufacturer? I want to trace whether the same underlying hardware shows up in competing rings or smartwatches.
