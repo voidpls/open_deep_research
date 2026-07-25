@@ -49,13 +49,40 @@ from open_deep_research.utils import (
     is_token_limit_exceeded,
     openai_websearch_called,
     remove_up_to_last_ai_message,
+    strip_think_tags,
     think_tool,
 )
 
-# Initialize a configurable model that we will use throughout the agent
-configurable_model = init_chat_model(
-    configurable_fields=("model", "max_tokens", "api_key"),
+# Single configurable model — thinking config set per-role via _llm_config helper
+model_profile = init_chat_model(
+    configurable_fields=("model", "max_tokens", "api_key", "extra_body"),
 )
+
+# Per-role thinking config. Currently empty — all roles use default thinking.
+# Set per role when a model supports thinking + tool_choice/struct_output together:
+#   "role": {"type": "enabled"}
+# Supported by OpenCode Go gateway: enabled, disabled, auto
+THINKING_BY_ROLE: dict[str, dict] = {}
+
+
+def _llm_config(
+    model: str,
+    max_tokens: int,
+    api_key: str,
+    *,
+    role: str | None = None,
+    tags: list[str] | None = None,
+) -> dict:
+    """Build model config dict. Adds extra_body thinking if role has one in THINKING_BY_ROLE."""
+    cfg: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "api_key": api_key,
+        "tags": tags or ["langsmith:nostream"],
+    }
+    if role and role in THINKING_BY_ROLE:
+        cfg["extra_body"] = {"thinking": THINKING_BY_ROLE[role]}
+    return cfg
 
 async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Command[Literal["write_research_brief", "__end__"]]:
     """Analyze user messages and ask clarifying questions if the research scope is unclear.
@@ -78,17 +105,18 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
     
     # Step 2: Prepare the model for structured clarification analysis
     messages = state["messages"]
-    model_config = {
-        "model": configurable.research_model,
-        "max_tokens": configurable.research_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.research_model, config),
-        "tags": ["langsmith:nostream"]
-    }
+    model_config = _llm_config(
+        model=configurable.structured_model,
+        max_tokens=configurable.structured_model_max_tokens,
+        api_key=get_api_key_for_model(configurable.structured_model, config),
+        role="clarify",
+    )
     
     # Configure model with structured output and retry logic
+    # ponytail: mimo-v2.5 for struct output (minimax-m3 unreliable tool_choice enforcement)
     clarification_model = (
-        configurable_model
-        .with_structured_output(ClarifyWithUser)
+        model_profile
+        .with_structured_output(ClarifyWithUser, method="function_calling")
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
         .with_config(model_config)
     )
@@ -129,21 +157,22 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     Returns:
         Command to proceed to research supervisor with initialized context
     """
-    # Step 1: Set up the research model for structured output
+    # Step 1: Set up the model for structured research brief generation
     configurable = Configuration.from_runnable_config(config)
-    research_model_config = {
-        "model": configurable.research_model,
-        "max_tokens": configurable.research_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.research_model, config),
-        "tags": ["langsmith:nostream"]
-    }
+    model_config = _llm_config(
+        model=configurable.structured_model,
+        max_tokens=configurable.structured_model_max_tokens,
+        api_key=get_api_key_for_model(configurable.structured_model, config),
+        role="brief",
+    )
     
     # Configure model for structured research question generation
+    # ponytail: mimo-v2.5 for struct output (minimax-m3 unreliable tool_choice enforcement)
     research_model = (
-        configurable_model
-        .with_structured_output(ResearchQuestion)
+        model_profile
+        .with_structured_output(ResearchQuestion, method="function_calling")
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(research_model_config)
+        .with_config(model_config)
     )
     
     # Step 2: Generate structured research brief from user messages
@@ -191,19 +220,18 @@ async def supervisor(state: SupervisorState, config: RunnableConfig) -> Command[
     """
     # Step 1: Configure the supervisor model with available tools
     configurable = Configuration.from_runnable_config(config)
-    research_model_config = {
-        "model": configurable.research_model,
-        "max_tokens": configurable.research_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.research_model, config),
-        "tags": ["langsmith:nostream"]
-    }
+    research_model_config = _llm_config(
+        model=configurable.research_model,
+        max_tokens=configurable.research_model_max_tokens,
+        api_key=get_api_key_for_model(configurable.research_model, config),
+    )
     
     # Available tools: research delegation, completion signaling, and strategic thinking
     lead_researcher_tools = [ConductResearch, ResearchComplete, think_tool]
     
     # Configure model with tools, retry logic, and model settings
     research_model = (
-        configurable_model
+        model_profile
         .bind_tools(lead_researcher_tools)
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
         .with_config(research_model_config)
@@ -389,12 +417,11 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
         )
     
     # Step 2: Configure the researcher model with tools
-    research_model_config = {
-        "model": configurable.research_model,
-        "max_tokens": configurable.research_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.research_model, config),
-        "tags": ["langsmith:nostream"]
-    }
+    model_config = _llm_config(
+        model=configurable.research_model,
+        max_tokens=configurable.research_model_max_tokens,
+        api_key=get_api_key_for_model(configurable.research_model, config),
+    )
     
     # Prepare system prompt with MCP context if available
     researcher_prompt = research_system_prompt.format(
@@ -404,10 +431,10 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
     
     # Configure model with tools, retry logic, and settings
     research_model = (
-        configurable_model
+        model_profile
         .bind_tools(tools)
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(research_model_config)
+        .with_config(model_config)
     )
     
     # Step 3: Generate researcher response with system context
@@ -524,12 +551,11 @@ async def compress_research(state: ResearcherState, config: RunnableConfig):
     """
     # Step 1: Configure the compression model
     configurable = Configuration.from_runnable_config(config)
-    synthesizer_model = configurable_model.with_config({
-        "model": configurable.compression_model,
-        "max_tokens": configurable.compression_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.compression_model, config),
-        "tags": ["langsmith:nostream"]
-    })
+    synthesizer_model = model_profile.with_config(_llm_config(
+        model=configurable.compression_model,
+        max_tokens=configurable.compression_model_max_tokens,
+        api_key=get_api_key_for_model(configurable.compression_model, config),
+    ))
     
     # Step 2: Prepare messages for compression
     researcher_messages = state.get("researcher_messages", [])
@@ -624,12 +650,11 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
     
     # Step 2: Configure the final report generation model
     configurable = Configuration.from_runnable_config(config)
-    writer_model_config = {
-        "model": configurable.final_report_model,
-        "max_tokens": configurable.final_report_model_max_tokens,
-        "api_key": get_api_key_for_model(configurable.final_report_model, config),
-        "tags": ["langsmith:nostream"]
-    }
+    writer_model_config = _llm_config(
+        model=configurable.final_report_model,
+        max_tokens=configurable.final_report_model_max_tokens,
+        api_key=get_api_key_for_model(configurable.final_report_model, config),
+    )
     
     # Step 3: Attempt report generation with token limit retry logic
     max_retries = 3
@@ -647,18 +672,24 @@ async def final_report_generation(state: AgentState, config: RunnableConfig):
             )
             
             # Generate the final report
-            final_report = await configurable_model.with_config(writer_model_config).ainvoke([
+            final_report = await model_profile.with_config(writer_model_config).ainvoke([
                 HumanMessage(content=final_report_prompt)
             ])
             
+            # Strip interleaved thinking tags from report content and message
+            report_text = strip_think_tags(final_report.content)
+            final_report.content = report_text
+            
             # Return successful report generation
             return {
-                "final_report": final_report.content, 
+                "final_report": report_text, 
                 "messages": [final_report],
                 **cleared_state
             }
             
         except Exception as e:
+            import logging
+            logging.warning(f"final_report attempt {current_retry+1}/{max_retries+1}: {type(e).__name__}: {e}")
             # Handle token limit exceeded errors with progressive truncation
             if is_token_limit_exceeded(e, configurable.final_report_model):
                 current_retry += 1
