@@ -44,11 +44,12 @@ dependencies = [
     "mcp>=1.9.4",
     "langchain-aws>=0.2.28",
     "pandas>=2.3.1",
+    "rentry>=2.0.0",
 ]
 
 [project.optional-dependencies]
 dev = ["mypy>=1.11.1", "ruff>=0.6.1"]
-bot = ["py-cord>=2.6"]
+bot = ["py-cord>=2.6", "rentry>=2.0"]
 
 [build-system]
 requires = ["setuptools>=73.0.0", "wheel"]

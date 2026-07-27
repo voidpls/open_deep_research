@@ -10,9 +10,7 @@ Built on a vendored copy of [open_deep_research](https://github.com/langchain-ai
 2. The bot may ask a clarifying question. Reply in the thread.
 3. It shows the research brief. Press Start.
 4. A status message updates while it researches.
-5. When finished: a summary in the thread, plus the full report as a markdown attachment.
-
-Reports are also saved to `reports/` on disk.
+5. When finished: a rentry.co link with dark-mode styled report, plus the full report as a markdown attachment.
 
 ## Setup
 
@@ -31,6 +29,7 @@ Fill in `.env`:
 | `TAVILY_API_KEY` | Web search. Free tier at [tavily.com](https://www.tavily.com/) is enough |
 | `OPENAI_API_KEY` | Any OpenAI-compatible endpoint |
 | `OPENAI_BASE_URL` | Only needed for a non-OpenAI bridge or gateway |
+| `GROQ_API_KEY` | Summarizes research topics into one-line headers. Free tier at [groq.com](https://console.groq.com/) |
 
 Invite the bot with the `bot` and `applications.commands` scopes, then:
 

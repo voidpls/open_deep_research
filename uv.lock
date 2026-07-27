@@ -3015,6 +3015,7 @@ dependencies = [
     { name = "pymupdf" },
     { name = "pytest" },
     { name = "python-dotenv" },
+    { name = "rentry" },
     { name = "requests" },
     { name = "rich" },
     { name = "supabase" },
@@ -3025,6 +3026,7 @@ dependencies = [
 [package.optional-dependencies]
 bot = [
     { name = "py-cord" },
+    { name = "rentry" },
 ]
 dev = [
     { name = "mypy" },
@@ -3065,6 +3067,8 @@ requires-dist = [
     { name = "pymupdf", specifier = ">=1.25.3" },
     { name = "pytest" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
+    { name = "rentry", specifier = ">=2.0.0" },
+    { name = "rentry", marker = "extra == 'bot'", specifier = ">=2.0" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.1" },
@@ -4425,6 +4429,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/e3/c446a64984ea9f69982ba1a69d4658d5014bc7a0ea468a07e1a1265db6e2/regex-2024.11.6-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:4f51f88c126370dcec4908576c5a627220da6c09d0bff31cfa89f2523843316d", size = 787733, upload-time = "2024-11-06T20:11:11.256Z" },
     { url = "https://files.pythonhosted.org/packages/2b/f1/e40c8373e3480e4f29f2692bd21b3e05f296d3afebc7e5dcf21b9756ca1c/regex-2024.11.6-cp313-cp313-win32.whl", hash = "sha256:63b13cfd72e9601125027202cad74995ab26921d8cd935c25f09c630436348ff", size = 262122, upload-time = "2024-11-06T20:11:13.161Z" },
     { url = "https://files.pythonhosted.org/packages/45/94/bc295babb3062a731f52621cdc992d123111282e291abaf23faa413443ea/regex-2024.11.6-cp313-cp313-win_amd64.whl", hash = "sha256:2b3361af3198667e99927da8b84c1b010752fa4b1115ee30beaa332cabc3ef1a", size = 273545, upload-time = "2024-11-06T20:11:15Z" },
+]
+
+[[package]]
+name = "rentry"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/05/917b28e527e1ca684daf4c2f30813db58f6515ee94afa2ceaf465b072859/rentry-2.0.0.tar.gz", hash = "sha256:65c9882e7d5525dd239fd7f66438434811ea1f776b89bea9cbe121a554e4cd7b", size = 9397, upload-time = "2026-07-15T13:41:55.664Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/20/3a546e4496b295ac36541f785f6c71c97e6611e53687923c888fb35acc25/rentry-2.0.0-py3-none-any.whl", hash = "sha256:7f0df9145cc7fdd354e6fed3a7aba17a2ab80de1c49a195683368353aa4d7343", size = 10841, upload-time = "2026-07-15T13:41:54.504Z" },
 ]
 
 [[package]]
