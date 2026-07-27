@@ -303,7 +303,7 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
     ]
     
     for tool_call in think_tool_calls:
-        reflection_content = tool_call["args"]["reflection"]
+        reflection_content = tool_call["args"].get("reflection", "")
         all_tool_messages.append(ToolMessage(
             content=f"Reflection recorded: {reflection_content}",
             name="think_tool",
