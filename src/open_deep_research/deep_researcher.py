@@ -1,7 +1,10 @@
 """Main LangGraph implementation for the Deep Research agent."""
 
 import asyncio
+import logging
 from typing import Literal
+
+log = logging.getLogger("research-bot")
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
@@ -320,9 +323,13 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
         try:
             # Limit concurrent research units to prevent resource exhaustion
             allowed_conduct_research_calls = conduct_research_calls[:configurable.max_concurrent_research_units]
-            overflow_conduct_research_calls = conduct_research_calls[configurable.max_concurrent_research_units:]
+            overflow_conduct_research_calls = conduct_research_calls[configurable.max_concurrent_research_units]
             
-            # Execute research tasks in parallel
+            log.info("supervisor_tools: gather start n=%s topics=%s",
+                     len(allowed_conduct_research_calls),
+                     [tc["args"].get("research_topic", "")[:80] for tc in allowed_conduct_research_calls])
+            
+            # Execute research tasks in parallel (with 15min wall-clock timeout)
             research_tasks = [
                 researcher_subgraph.ainvoke({
                     "researcher_messages": [
@@ -333,7 +340,12 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
                 for tool_call in allowed_conduct_research_calls
             ]
             
-            tool_results = await asyncio.gather(*research_tasks)
+            tool_results = await asyncio.wait_for(
+                asyncio.gather(*research_tasks),
+                timeout=900.0,
+            )
+            
+            log.info("supervisor_tools: gather done")
             
             # Create tool messages with research results
             for observation, tool_call in zip(tool_results, allowed_conduct_research_calls):
@@ -360,6 +372,18 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
             if raw_notes_concat:
                 update_payload["raw_notes"] = [raw_notes_concat]
                 
+        except asyncio.TimeoutError:
+            import logging
+            logging.getLogger("research-bot").error(
+                "supervisor_tools: researcher gather timed out (>900s)"
+            )
+            return Command(
+                goto=END,
+                update={
+                    "notes": get_notes_from_tool_calls(supervisor_messages),
+                    "research_brief": state.get("research_brief", ""),
+                },
+            )
         except Exception as e:
             # Handle research execution errors
             if is_token_limit_exceeded(e, configurable.research_model) or True:
@@ -442,7 +466,10 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
     
     # Step 3: Generate researcher response with system context
     messages = [SystemMessage(content=researcher_prompt)] + researcher_messages
+    log.info("researcher: llm start topic=%s iters=%s",
+             state.get("research_topic", "")[:80], state.get("tool_call_iterations"))
     response = await research_model.ainvoke(messages)
+    log.info("researcher: llm done tool_calls=%s", bool(getattr(response, "tool_calls", None)))
     
     # Step 4: Update state and proceed to tool execution
     return Command(
@@ -502,11 +529,14 @@ async def researcher_tools(state: ResearcherState, config: RunnableConfig) -> Co
     
     # Execute all tool calls in parallel
     tool_calls = most_recent_message.tool_calls
+    log.info("researcher_tools: tools start n=%s names=%s",
+             len(tool_calls), [t["name"] for t in tool_calls])
     tool_execution_tasks = [
         execute_tool_safely(tools_by_name[tool_call["name"]], tool_call["args"], config) 
         for tool_call in tool_calls
     ]
     observations = await asyncio.gather(*tool_execution_tasks)
+    log.info("researcher_tools: tools done")
     
     # Create tool messages from execution results
     tool_outputs = [

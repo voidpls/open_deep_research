@@ -159,19 +159,35 @@ async def tavily_search_async(
     # Initialize the Tavily client with API key from config
     tavily_client = AsyncTavilyClient(api_key=get_tavily_api_key(config))
     
-    # Create search tasks for parallel execution
-    search_tasks = [
-        tavily_client.search(
-            query,
-            max_results=max_results,
-            include_raw_content=include_raw_content,
-            topic=topic
-        )
-        for query in search_queries
-    ]
+    log = logging.getLogger("research-bot")
+    log.info("tavily_search_async: start queries=%s", search_queries)
     
-    # Execute all search queries in parallel and return results
+    # Create search tasks with 60s timeout per query (mirrors summarize_webpage pattern)
+    async def _search_one(query: str):
+        try:
+            return await asyncio.wait_for(
+                tavily_client.search(
+                    query,
+                    max_results=max_results,
+                    include_raw_content=include_raw_content,
+                    topic=topic
+                ),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            import logging
+            logging.getLogger("research-bot").warning("Tavily search timed out: %.80s", query)
+            return {"query": query, "results": []}
+        except Exception as exc:
+            import logging
+            logging.getLogger("research-bot").warning("Tavily search error: %.80s %s", query, exc)
+            return {"query": query, "results": []}
+    
+    search_tasks = [_search_one(q) for q in search_queries]
+    
+    # Execute all search queries in parallel
     search_results = await asyncio.gather(*search_tasks)
+    log.info("tavily_search_async: done n=%s", len(search_results))
     return search_results
 
 async def summarize_webpage(model: BaseChatModel, webpage_content: str) -> str:
