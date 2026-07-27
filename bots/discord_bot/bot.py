@@ -25,8 +25,9 @@ from api import (
 load_dotenv()
 TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("research-bot")
+logger.setLevel(logging.INFO)
 
 bot = discord.Bot()
 
@@ -34,25 +35,12 @@ bot = discord.Bot()
 _active: dict[int, tuple[asyncio.Task, discord.Thread]] = {}
 _MAX_ITER = 3
 
-_GLYPH = {
-    "clarify": "📝",
-    "brief": "⏸",
-    "research": "🔬",
-    "report": "✍️",
-}
-
-
 def _fmt_status(s: dict) -> str:
-    g = _GLYPH.get(s["phase"], "🔬")
     p = s["phase"]
-    if p == "clarify":
-        return f"{g} Clarifying..."
-    if p == "brief":
-        return f"{g} Awaiting confirmation..."
     if p == "report":
-        return f"{g} Writing report..."
+        return "Writing report..."
     cur, tot = s["iteration"]
-    parts = [f"{g} iter {cur}/{tot}"]
+    parts = [f"Researching · iter {cur}/{tot}"]
     if s["researchers"]:
         parts.append(f"{s['researchers']} researchers")
     if s["sources"]:
@@ -69,22 +57,20 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
     cancelled = asyncio.Event()
 
     state = {
-        "phase": "clarify",
+        "phase": "research",
         "iteration": (0, _MAX_ITER),
         "researchers": 0,
         "sources": 0,
     }
 
-    status_msg = await thread.send("📝 Clarifying...")
-
-    # --- Cancel button (lives on status msg for whole run) ---
+    # --- Cancel button (reusable) ---
     cancel_view = discord.ui.View(timeout=None)
 
     async def _on_cancel(interaction: discord.Interaction):
         cancelled.set()
         await inbox.put("cancel")
         try:
-            await interaction.response.edit_message(content="❌ Cancelled", view=None)
+            await interaction.response.edit_message(content="Cancelled", view=None)
         except Exception:
             pass
 
@@ -92,19 +78,26 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
     cb.callback = _on_cancel
     cancel_view.add_item(cb)
 
-    # --- Periodic status updater ---
-    async def _upd():
-        while not cancelled.is_set():
-            try:
-                await status_msg.edit(content=_fmt_status(state), view=cancel_view)
-            except Exception:
-                pass
-            try:
-                await asyncio.wait_for(cancelled.wait(), 5)
-            except asyncio.TimeoutError:
-                pass
+    # Status message + updater — created lazily when research starts
+    status_msg = None
+    upd_task = None
 
-    upd_task = asyncio.create_task(_upd())
+    async def _start_updater():
+        nonlocal status_msg, upd_task
+        status_msg = await thread.send(_fmt_status(state), view=cancel_view)
+
+        async def _upd():
+            while not cancelled.is_set():
+                try:
+                    await status_msg.edit(content=_fmt_status(state), view=cancel_view)
+                except Exception:
+                    pass
+                try:
+                    await asyncio.wait_for(cancelled.wait(), 5)
+                except asyncio.TimeoutError:
+                    pass
+
+        upd_task = asyncio.create_task(_upd())
 
     try:
         async for event in research_stream(prompt, inbox):
@@ -113,13 +106,11 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
 
             # ----- ClarifyQuestion -----
             if isinstance(event, ClarifyQuestion):
-                state["phase"] = "clarify"
                 await thread.send(event.question)
 
                 def _check(m):
                     return m.channel.id == thread.id and m.author.id == uid
 
-                # Race wait_for against cancel button
                 wt = asyncio.create_task(
                     bot.wait_for("message", check=_check, timeout=600)
                 )
@@ -131,7 +122,6 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                     t.cancel()
 
                 if ct in done:
-                    # Cancel was clicked
                     await inbox.put("cancel")
                     break
 
@@ -140,13 +130,11 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                     await inbox.put(reply.content)
                 except asyncio.TimeoutError:
                     await inbox.put("cancel")
-                    await thread.send("❌ Timed out — cancelled.")
+                    await thread.send("Timed out — cancelled.")
                     break
 
             # ----- BriefReady -----
             elif isinstance(event, BriefReady):
-                state["phase"] = "brief"
-
                 bv = discord.ui.View(timeout=600)
 
                 async def _start(interaction: discord.Interaction):
@@ -165,7 +153,7 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                     cancelled.set()
                     await inbox.put("cancel")
                     try:
-                        await bv.message.edit(content="⏸ Timed out — cancelled.", view=None)
+                        await bv.message.edit(content="Timed out — cancelled.", view=None)
                     except Exception:
                         pass
 
@@ -181,28 +169,35 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                 bv.add_item(cbb)
 
                 await thread.send(event.brief, view=bv)
-                # API handles inbox.get() — bot only puts via button callbacks
 
             # ----- SupervisorTick -----
             elif isinstance(event, SupervisorTick):
                 state["phase"] = "research"
                 state["iteration"] = (event.research_iterations, _MAX_ITER)
+                if status_msg is None:
+                    await _start_updater()
 
             # ----- SupervisorToolsDone -----
             elif isinstance(event, SupervisorToolsDone):
                 state["phase"] = "research"
                 state["researchers"] = event.researchers_spawned
                 state["sources"] = event.new_urls
+                if status_msg is None:
+                    await _start_updater()
 
             # ----- ReportStarted -----
             elif isinstance(event, ReportStarted):
                 state["phase"] = "report"
+                if status_msg is None:
+                    await _start_updater()
 
             # ----- Done -----
             elif isinstance(event, Done):
                 cancelled.set()
-                upd_task.cancel()
-                await status_msg.edit(content="✅ Done", view=None)
+                if upd_task:
+                    upd_task.cancel()
+                if status_msg:
+                    await status_msg.edit(content="Done", view=None)
                 summary = _trunc(event.report, 1800)
                 await thread.send(summary)
                 await thread.send(file=discord.File(event.report_path))
@@ -211,22 +206,28 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             # ----- Failed -----
             elif isinstance(event, Failed):
                 cancelled.set()
-                upd_task.cancel()
+                if upd_task:
+                    upd_task.cancel()
                 logger.error("Research failed:\n%s", event.error)
-                await status_msg.edit(content=f"❌ {event.error}", view=None)
+                if status_msg:
+                    await status_msg.edit(content=event.error, view=None)
+                else:
+                    await thread.send(event.error)
                 return
 
     except asyncio.CancelledError:
         cancelled.set()
-        upd_task.cancel()
-        try:
-            await status_msg.edit(content="❌ Cancelled", view=None)
-        except Exception:
-            pass
+        if upd_task:
+            upd_task.cancel()
+        if status_msg:
+            try:
+                await status_msg.edit(content="Cancelled", view=None)
+            except Exception:
+                pass
         raise
     finally:
         cancelled.set()
-        if not upd_task.done():
+        if upd_task and not upd_task.done():
             upd_task.cancel()
 
 
