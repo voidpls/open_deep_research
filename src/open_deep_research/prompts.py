@@ -51,7 +51,7 @@ The messages that have been exchanged so far between yourself and the user are:
 
 Today's date is {date}.
 
-You will return a single research question that will be used to guide the research.
+You will return a single research question that will be used to guide the research. This should be in the form of a bulleted outline (markdown). 
 
 Guidelines:
 1. Maximize Specificity and Detail
@@ -75,9 +75,9 @@ Guidelines:
 - For people, try linking directly to their LinkedIn profile, or their personal website if they have one.
 - If the query is in a specific language, prioritize sources published in that language.
 
-6. Tone and Format
+6. Tone & Format
 - Be direct and concise. No preamble, no filler.
-- Keep plan organized, bulleted lists where needed.
+- Reminder: This should be in the form of a bulleted outline (markdown).
 """
 
 lead_researcher_prompt = """You are a research supervisor. Your job is to conduct research by calling the "ConductResearch" tool. For context, today's date is {date}.
