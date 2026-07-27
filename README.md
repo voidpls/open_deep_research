@@ -2,7 +2,7 @@
 
 A Discord bot for deep research. Run `/research <question>` and it asks clarifying questions, shows you a research plan, posts progress updates, and delivers a report, all in a thread.
 
-Built on a vendored copy of [open_deep_research](https://github.com/langchain-ai/open_deep_research). The research engine in `src/open_deep_research/` is unmodified. Bot code lives in `api.py` and `bots/discord_bot/`.
+Built on a vendored copy of [open_deep_research](https://github.com/langchain-ai/open_deep_research). Bot code lives in `api.py` and `bots/discord_bot/`.
 
 ## Usage
 
