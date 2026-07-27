@@ -194,8 +194,8 @@ async def research_stream(
         found = set()
         for response in search_results or []:
             for result in response.get("results") or []:
-                if result.get("raw_content") and result.get("url"):
-                    found.add(result["url"])
+                if url := result.get("url"):
+                    found.add(url)
         if found:
             seen_urls.update(found)
             if live is not None:

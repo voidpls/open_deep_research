@@ -93,7 +93,7 @@ def _build_status_embed(state: dict, gif: bool = True) -> discord.Embed:
     if gif:
         embed.set_image(url=_RESEARCHING_GIF)
     if state["sources"]:
-        embed.description = f"Sources explored: **` {state['sources']} `**"
+        embed.description = f"Sources: **` {state['sources']} `**"
     for i, topics in enumerate(state["phases"], 1):
         summarized = []
         for t in topics:
@@ -104,7 +104,9 @@ def _build_status_embed(state: dict, gif: bool = True) -> discord.Embed:
         bullets = "\n\n".join(f"- {s}" for s in summarized)
         if len(bullets) > 1024:
             bullets = bullets[:1021] + "..."
-        embed.add_field(name=f"Research Phase {i}", value=bullets, inline=False)
+        embed.add_field(name=f"❭ Research Phase {i}", value=bullets, inline=False)
+    if state.get("phase") == "assessing":
+        embed.add_field(name="❭ Analyzing Results", value="\u200b", inline=False)
     return embed
 
 
@@ -126,8 +128,10 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
     state = {
         "sources": 0,
         "phases": [],  # list of topic lists per phase
+        "phase": "starting",
     }
     live = {"sources": 0}
+    last_tools_done_at = None
 
     # --- Cancel button (reusable) ---
     cancel_view = discord.ui.View(timeout=None)
@@ -155,14 +159,19 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
 
     async def _start_updater():
         nonlocal upd_task
+        _last_sig = None
 
         async def _upd():
+            nonlocal _last_sig
             while not cancelled.is_set():
                 state["sources"] = live.get("sources") or state["sources"]
-                try:
-                    await status_msg.edit(embed=_build_status_embed(state), view=cancel_view)
-                except Exception:
-                    pass
+                sig = (state["sources"], len(state["phases"]), state["phase"])
+                if sig != _last_sig:
+                    _last_sig = sig
+                    try:
+                        await status_msg.edit(embed=_build_status_embed(state), view=cancel_view)
+                    except Exception:
+                        pass
                 try:
                     await asyncio.wait_for(cancelled.wait(), 1.5)
                 except asyncio.TimeoutError:
@@ -211,6 +220,7 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
 
                 async def _start(interaction: discord.Interaction):
                     nonlocal status_msg, start_time
+                    bv.stop()  # cancel timeout timer so _bv_timeout doesn't fire later
                     await inbox.put("start")
                     await interaction.response.edit_message(view=None)
                     start_time = time.monotonic()
@@ -246,13 +256,14 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
 
                 brief_embed = discord.Embed(title="Research Question", description=event.brief, color=_EMBED_COLOR)
                 try:
-                    await brief_msg.edit(embed=brief_embed, view=bv)
+                    await brief_msg.edit(content=None, embed=brief_embed, view=bv)
                 except Exception:
                     await thread.send(embed=brief_embed, view=bv)
 
             # ----- SupervisorTick -----
             elif isinstance(event, SupervisorTick):
                 if event.conduct_research_topics:
+                    state["phase"] = "researching"
                     state["phases"].append(event.conduct_research_topics)
                     for t in event.conduct_research_topics:
                         await _summarize_topic(t)
@@ -262,11 +273,14 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             # ----- SupervisorToolsDone -----
             elif isinstance(event, SupervisorToolsDone):
                 state["sources"] = event.sources
+                state["phase"] = "assessing"
+                last_tools_done_at = time.monotonic()
                 if status_msg:
                     await status_msg.edit(embed=_build_status_embed(state), view=cancel_view)
 
             # ----- ReportStarted -----
             elif isinstance(event, ReportStarted):
+                state["phase"] = "writing"
                 if upd_task:
                     upd_task.cancel()
                 report_msg = await thread.send("https://klipy.com/gifs/fire-writing")
@@ -289,6 +303,14 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             # ----- Done -----
             elif isinstance(event, Done):
                 cancelled.set()
+
+                # Final source count from regex on all messages (accurate)
+                state["sources"] = len(event.sources)
+                if status_msg:
+                    try:
+                        await status_msg.edit(embed=_build_status_embed(state, gif=False))
+                    except Exception:
+                        pass
 
                 # Publish to rentry (best-effort), fallback to file upload
                 brief = event.brief
