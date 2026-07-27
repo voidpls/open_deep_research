@@ -36,7 +36,6 @@ from open_deep_research.state import (
     ResearchComplete,
     ResearcherOutputState,
     ResearcherState,
-    ResearchQuestion,
     SupervisorState,
 )
 from open_deep_research.utils import (
@@ -105,26 +104,31 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
     
     # Step 2: Prepare the model for structured clarification analysis
     messages = state["messages"]
-    model_config = _llm_config(
-        model=configurable.structured_model,
-        max_tokens=configurable.structured_model_max_tokens,
-        api_key=get_api_key_for_model(configurable.structured_model, config),
-        role="clarify",
-    )
-    
-    # Configure model with structured output and retry logic
-    # ponytail: mimo-v2.5 for struct output (minimax-m3 unreliable tool_choice enforcement)
+
+    # ponytail: json_mode + response_format — function_calling intermittently
+    # returns None from mimo-v2.5-pro (no tool call emitted) and with_retry
+    # never fires on None; parse errors raise so retries actually happen.
     clarification_model = (
-        model_profile
-        .with_structured_output(ClarifyWithUser, method="function_calling")
+        init_chat_model(
+            model=configurable.structured_model,
+            max_tokens=configurable.structured_model_max_tokens,
+            api_key=get_api_key_for_model(configurable.structured_model, config),
+            model_kwargs={"response_format": {"type": "json_object"}},
+        )
+        .with_structured_output(ClarifyWithUser, method="json_mode")
         .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(model_config)
     )
-    
+
     # Step 3: Analyze whether clarification is needed
     prompt_content = clarify_with_user_instructions.format(
-        messages=get_buffer_string(messages), 
+        messages=get_buffer_string(messages),
         date=get_today_str()
+    )
+    # json_mode: no tool schema sent — prompt must carry the exact keys
+    prompt_content += (
+        '\n\nOutput ONLY a JSON object, no markdown fences, no prose, with these exact keys:\n'
+        '{"need_clarification": <true or false>, "question": "<question to ask, empty if not needed>", '
+        '"verification": "<verification message, empty if clarification needed>"}'
     )
     response = await clarification_model.ainvoke([HumanMessage(content=prompt_content)])
     
@@ -157,30 +161,29 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     Returns:
         Command to proceed to research supervisor with initialized context
     """
-    # Step 1: Set up the model for structured research brief generation
+    # Step 1: Set up the model for research brief generation
     configurable = Configuration.from_runnable_config(config)
-    model_config = _llm_config(
+
+    # Configure model for research brief generation
+    # ponytail: plain text, not structured output — schema was a single string
+    # field, so validation added nothing while function_calling (silent None)
+    # and json_mode (parse surface) each added a failure class. Empty content
+    # raises so with_retry actually retries.
+    brief_model = init_chat_model(
         model=configurable.structured_model,
         max_tokens=configurable.structured_model_max_tokens,
         api_key=get_api_key_for_model(configurable.structured_model, config),
-        role="brief",
-    )
-    
-    # Configure model for structured research question generation
-    # ponytail: mimo-v2.5 for struct output (minimax-m3 unreliable tool_choice enforcement)
-    research_model = (
-        model_profile
-        .with_structured_output(ResearchQuestion, method="function_calling")
-        .with_retry(stop_after_attempt=configurable.max_structured_output_retries)
-        .with_config(model_config)
-    )
-    
-    # Step 2: Generate structured research brief from user messages
+    ).with_retry(stop_after_attempt=configurable.max_structured_output_retries)
+
+    # Step 2: Generate research brief from user messages
     prompt_content = transform_messages_into_research_topic_prompt.format(
         messages=get_buffer_string(state.get("messages", [])),
         date=get_today_str()
     )
-    response = await research_model.ainvoke([HumanMessage(content=prompt_content)])
+    response = await brief_model.ainvoke([HumanMessage(content=prompt_content)])
+    research_brief = response.content.strip()
+    if not research_brief:
+        raise ValueError("Empty research brief from model")
     
     # Step 3: Initialize supervisor with research brief and instructions
     supervisor_system_prompt = lead_researcher_prompt.format(
@@ -192,12 +195,12 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
     return Command(
         goto="research_supervisor", 
         update={
-            "research_brief": response.research_brief,
+            "research_brief": research_brief,
             "supervisor_messages": {
                 "type": "override",
                 "value": [
                     SystemMessage(content=supervisor_system_prompt),
-                    HumanMessage(content=response.research_brief)
+                    HumanMessage(content=research_brief)
                 ]
             }
         }

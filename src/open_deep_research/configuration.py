@@ -119,11 +119,11 @@ class Configuration(BaseModel):
     )
     # Model Configuration
     summarization_model: str = Field(
-        default="openai:gpt-4.1-mini",
+        default="openai:mimo-v2.5",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1-mini",
+                "default": "openai:mimo-v2.5",
                 "description": "Model for summarizing research results from Tavily search results"
             }
         }
@@ -151,11 +151,11 @@ class Configuration(BaseModel):
         }
     )
     research_model: str = Field(
-        default="openai:gpt-4.1",
+        default="openai:minimax-m3",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1",
+                "default": "openai:minimax-m3",
                 "description": "Model for conducting research. NOTE: Make sure your Researcher Model supports the selected search API."
             }
         }
@@ -171,11 +171,11 @@ class Configuration(BaseModel):
         }
     )
     compression_model: str = Field(
-        default="openai:gpt-4.1",
+        default="openai:mimo-v2.5",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1",
+                "default": "openai:mimo-v2.5",
                 "description": "Model for compressing research findings from sub-agents. NOTE: Make sure your Compression Model supports the selected search API."
             }
         }
@@ -191,11 +191,11 @@ class Configuration(BaseModel):
         }
     )
     final_report_model: str = Field(
-        default="openai:gpt-4.1",
+        default="openai:minimax-m3",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1",
+                "default": "openai:minimax-m3",
                 "description": "Model for writing the final report from all research findings"
             }
         }
@@ -211,11 +211,11 @@ class Configuration(BaseModel):
         }
     )
     structured_model: str = Field(
-        default="openai:gpt-4.1-mini",
+        default="openai:mimo-v2.5-pro",
         metadata={
             "x_oap_ui_config": {
                 "type": "text",
-                "default": "openai:gpt-4.1-mini",
+                "default": "openai:mimo-v2.5-pro",
                 "description": "Model for structured output nodes (clarify, research brief)"
             }
         }

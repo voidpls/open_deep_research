@@ -88,8 +88,9 @@ async def tavily_search(
         model=configurable.summarization_model,
         max_tokens=configurable.summarization_model_max_tokens,
         api_key=model_api_key,
-        tags=["langsmith:nostream"]
-    ).with_structured_output(Summary).with_retry(
+        tags=["langsmith:nostream"],
+        model_kwargs={"response_format": {"type": "json_object"}},
+    ).with_structured_output(Summary, method="json_mode").with_retry(
         stop_after_attempt=configurable.max_structured_output_retries
     )
     
