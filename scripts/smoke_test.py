@@ -1,8 +1,8 @@
 """Smoke test: run a trivial prompt through odr-stock, print per-node latencies."""
 import asyncio, json, re, time, uuid
 from dotenv import load_dotenv
-# odr-stock has no .env — load from odr-fork
-load_dotenv("../odr-fork/.env", override=True)
+# Run from odr-stock root; loads root .env
+load_dotenv(override=True)
 from langgraph.checkpoint.memory import MemorySaver
 from open_deep_research.deep_researcher import deep_researcher_builder
 
