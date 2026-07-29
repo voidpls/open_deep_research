@@ -138,6 +138,16 @@ class Configuration(BaseModel):
             }
         }
     )
+    summarization_structured_output: bool = Field(
+        default=True,
+        metadata={
+            "x_oap_ui_config": {
+                "type": "boolean",
+                "default": True,
+                "description": "Whether summarization model supports structured output (json_mode). Set to False for models behind gateways that reject response_format."
+            }
+        }
+    )
     max_content_length: int = Field(
         default=50000,
         metadata={

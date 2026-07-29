@@ -21,8 +21,9 @@ MATRIX = {
     "structured_model_max_tokens": 10000,
     "research_model": "openai:minimax-m3",
     "research_model_max_tokens": 10000,
-    "summarization_model": "openai:mimo-v2.5",
+    "summarization_model": "openai:deepseek-v4-flash",
     "summarization_model_max_tokens": 8192,
+    "summarization_structured_output": False,
     "compression_model": "openai:mimo-v2.5",
     "compression_model_max_tokens": 10000,
     "final_report_model": "openai:minimax-m3",
@@ -198,8 +199,9 @@ async def research_stream(
                     found.add(url)
         if found:
             seen_urls.update(found)
-            if live is not None:
-                live["sources"] = len(seen_urls)
+        if live is not None:
+            live["sources"] = len(seen_urls)
+            live["rounds"] = live.get("rounds", 0) + 1
         return search_results
 
     _utils.tavily_search_async = _count_async
@@ -233,6 +235,8 @@ async def research_stream(
                                         if tc.get("name") == "ConductResearch":
                                             topics.append(tc["args"].get("research_topic", ""))
                             if iters:
+                                if live is not None and topics:
+                                    live["rounds"] = 0  # reset for new research phase
                                 yield SupervisorTick(
                                     research_iterations=iters,
                                     conduct_research_topics=topics,

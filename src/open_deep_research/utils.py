@@ -34,6 +34,24 @@ from open_deep_research.configuration import Configuration, SearchAPI
 from open_deep_research.prompts import summarize_webpage_prompt
 from open_deep_research.state import ResearchComplete, Summary
 
+_SUMMARY_JSON_RE = re.compile(r'\{.*"summary".*?"key_excerpts".*?\}', re.DOTALL)
+
+def _parse_summary_json(text: str) -> dict | None:
+    """Extract and parse JSON with summary+key_excerpts from model response text."""
+    m = _SUMMARY_JSON_RE.search(text)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+    text_stripped = text.strip()
+    text_clean = re.sub(r'^```(?:json)?\s*', '', text_stripped, flags=re.MULTILINE)
+    text_clean = re.sub(r'\s*```$', '', text_clean, flags=re.MULTILINE)
+    try:
+        return json.loads(text_clean)
+    except json.JSONDecodeError:
+        return None
+
 ##########################
 # Tavily Search Tool Utils
 ##########################
@@ -84,15 +102,24 @@ async def tavily_search(
     
     # Initialize summarization model with retry logic
     model_api_key = get_api_key_for_model(configurable.summarization_model, config)
-    summarization_model = init_chat_model(
+    base_model = init_chat_model(
         model=configurable.summarization_model,
         max_tokens=configurable.summarization_model_max_tokens,
         api_key=model_api_key,
         tags=["langsmith:nostream"],
-        model_kwargs={"response_format": {"type": "json_object"}},
-    ).with_structured_output(Summary, method="json_mode").with_retry(
-        stop_after_attempt=configurable.max_structured_output_retries
     )
+    
+    use_structured = configurable.summarization_structured_output
+    if use_structured:
+        summarization_model = base_model.with_structured_output(
+            Summary, method="json_mode"
+        ).with_retry(
+            stop_after_attempt=configurable.max_structured_output_retries
+        )
+    else:
+        summarization_model = base_model.with_retry(
+            stop_after_attempt=configurable.max_structured_output_retries
+        )
     
     # Step 4: Create summarization tasks (skip empty content)
     async def noop():
@@ -103,7 +130,8 @@ async def tavily_search(
         noop() if not result.get("raw_content") 
         else summarize_webpage(
             summarization_model, 
-            result['raw_content'][:max_char_to_include]
+            result['raw_content'][:max_char_to_include],
+            use_structured=use_structured,
         )
         for result in unique_results.values()
     ]
@@ -190,12 +218,14 @@ async def tavily_search_async(
     log.info("tavily_search_async: done n=%s", len(search_results))
     return search_results
 
-async def summarize_webpage(model: BaseChatModel, webpage_content: str) -> str:
+async def summarize_webpage(model: BaseChatModel, webpage_content: str, use_structured: bool = True) -> str:
     """Summarize webpage content using AI model with timeout protection.
     
     Args:
         model: The chat model configured for summarization
         webpage_content: Raw webpage content to be summarized
+        use_structured: If True, expects model to return Summary Pydantic object
+                        (structured output). If False, expects JSON text response.
         
     Returns:
         Formatted summary with key excerpts, or original content if summarization fails
@@ -207,17 +237,38 @@ async def summarize_webpage(model: BaseChatModel, webpage_content: str) -> str:
             date=get_today_str()
         )
         
-        # Execute summarization with timeout to prevent hanging
-        summary = await asyncio.wait_for(
-            model.ainvoke([HumanMessage(content=prompt_content)]),
-            timeout=60.0  # 60 second timeout for summarization
-        )
-        
-        # Format the summary with structured sections
-        formatted_summary = (
-            f"<summary>\n{summary.summary}\n</summary>\n\n"
-            f"<key_excerpts>\n{summary.key_excerpts}\n</key_excerpts>"
-        )
+        if use_structured:
+            # Structured output path (mimo-v2.5, etc.)
+            summary = await asyncio.wait_for(
+                model.ainvoke([HumanMessage(content=prompt_content)]),
+                timeout=60.0  # 60 second timeout for summarization
+            )
+            
+            # Format the summary with structured sections
+            formatted_summary = (
+                f"<summary>\n{summary.summary}\n</summary>\n\n"
+                f"<key_excerpts>\n{summary.key_excerpts}\n</key_excerpts>"
+            )
+        else:
+            # Plain text path (deepseek-v4-flash via Console Go — no structured output)
+            prompt = prompt_content + (
+                "\n\nYou MUST return ONLY valid JSON with fields: summary (string), key_excerpts (string)."
+                " No markdown fences, no prose, no reasoning — just the JSON object."
+            )
+            resp = await asyncio.wait_for(
+                model.ainvoke([HumanMessage(content=prompt)]),
+                timeout=60.0
+            )
+            text = resp.content if isinstance(resp.content, str) else str(resp.content)
+            parsed = _parse_summary_json(text)
+            if parsed and isinstance(parsed.get("summary"), str) and isinstance(parsed.get("key_excerpts"), str):
+                formatted_summary = (
+                    f"<summary>\n{parsed['summary']}\n</summary>\n\n"
+                    f"<key_excerpts>\n{parsed['key_excerpts']}\n</key_excerpts>"
+                )
+            else:
+                # Parse failed — return raw text as fallback
+                return text[:50000]
         
         return formatted_summary
         
