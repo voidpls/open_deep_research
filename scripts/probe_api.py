@@ -80,11 +80,6 @@ async def main() -> None:
     if "no_failure" not in checks:
         checks["no_failure"] = True
 
-    # Report path exists on disk
-    if report_text:
-        # Grab the last Done's path from what we printed
-        pass  # we already validated report_text truthiness
-
     print()
     all_ok = True
     for name, ok in checks.items():

@@ -1,6 +1,7 @@
 """Bot-agnostic research API. Wraps deep_researcher with pause/resume events."""
 
 import asyncio
+import logging
 import re
 import secrets
 import uuid
@@ -118,7 +119,6 @@ async def summarize_report(report: str, brief: str) -> str:
     try:
         resp = await model_profile.with_config(cfg).ainvoke([HumanMessage(content=prompt)])
     except Exception:
-        import logging
         logging.getLogger("research-bot").warning("TL;DR model call failed", exc_info=True)
         return ""
     text = resp.content if isinstance(resp.content, str) else str(resp.content)
@@ -174,7 +174,6 @@ async def research_stream(
                 if result.get("raw_content") and (url := result.get("url")):
                     found.add(url)
                     with_raw += 1
-        import logging
         logging.getLogger("research-bot").debug("_count_async: %d/%d URLs with raw_content", with_raw, total)
         if found:
             seen_urls.update(found)

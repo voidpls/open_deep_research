@@ -38,12 +38,6 @@ TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("research-bot")
 logger.setLevel(logging.INFO)
-_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-_h = logging.StreamHandler()
-_h.setLevel(logging.INFO)
-_h.setFormatter(_fmt)
-logger.addHandler(_h)
-logger.propagate = False
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -151,6 +145,24 @@ def _truncate(text: str, max_len: int) -> str:
     return truncated.rstrip() + "..."
 
 
+async def _wait_for_msg_or_cancel(
+    bot, _check, cancelled: asyncio.Event, timeout: float | None = None
+) -> tuple[asyncio.Task | None, asyncio.Task]:
+    """Wait for a message or cancellation. Returns (msg_task, cancel_task).
+
+    msg_task is None if cancelled or timed out. Check cancel_task to distinguish.
+    """
+    kwargs = {"check": _check}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    wt = asyncio.create_task(bot.wait_for("message", **kwargs))
+    ct = asyncio.create_task(cancelled.wait())
+    done, pending = await asyncio.wait([wt, ct], return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+    return wt if wt in done else None, ct
+
+
 async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
     inbox = asyncio.Queue()
     cancelled = asyncio.Event()
@@ -197,14 +209,9 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
         nonlocal brief_msg, prev_brief_msg
         try:
             while not cancelled.is_set():
-                wt = asyncio.create_task(bot.wait_for("message", check=_check))
-                ct = asyncio.create_task(cancelled.wait())
-                done, pending = await asyncio.wait([wt, ct], return_when=asyncio.FIRST_COMPLETED)
-                for t in pending:
-                    t.cancel()
-                if wt in done and not wt.cancelled():
+                wt, ct = await _wait_for_msg_or_cancel(bot, _check, cancelled)
+                if wt is not None:
                     msg = await wt
-                    logger.info("Listener captured message: %s", msg.content[:50])
                     await inbox.put(msg.content)
                     # New placeholder — old brief stays as reference
                     prev_brief_msg = brief_msg
@@ -213,7 +220,7 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                     except Exception:
                         pass
         except Exception:
-            logger.warning("_listen crashed", exc_info=True)
+            pass
 
     async def _start_updater():
         nonlocal upd_task
@@ -254,21 +261,18 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             # ----- ClarifyQuestion -----
             if isinstance(event, ClarifyQuestion):
                 clarify_embed = discord.Embed(title="Clarification Needed", description=event.question, color=_EMBED_COLOR)
-                # Send new message — old brief stays as reference
-                brief_msg = await thread.send(embed=clarify_embed)
+                try:
+                    await brief_msg.edit(content=None, embed=clarify_embed, view=None)
+                except Exception:
+                    brief_msg = await thread.send(embed=clarify_embed)
 
-                wt = asyncio.create_task(
-                    bot.wait_for("message", check=_check, timeout=600)
-                )
-                ct = asyncio.create_task(cancelled.wait())
-                done, pending = await asyncio.wait(
-                    [wt, ct], return_when=asyncio.FIRST_COMPLETED
-                )
-                for t in pending:
-                    t.cancel()
+                wt, ct = await _wait_for_msg_or_cancel(bot, _check, cancelled, timeout=600)
 
-                if ct in done:
+                if wt is None:
+                    # Cancelled or timed out
                     await inbox.put("cancel")
+                    if not ct.done():
+                        await thread.send("Timed out — cancelled.")
                     break
 
                 try:
@@ -344,7 +348,6 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                     await thread.send(embed=brief_embed, view=bv)
                 if msg_task is None or msg_task.done():
                     msg_task = asyncio.create_task(_listen())
-                    logger.info("Started message listener")
 
             # ----- SupervisorTick -----
             elif isinstance(event, SupervisorTick):
@@ -380,12 +383,7 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                 # Research is done — update status embed with elapsed time, remove gif
                 if status_msg and start_time:
                     elapsed = int(time.monotonic() - start_time)
-                    if elapsed >= 3600:
-                        footer = f"Research time: {elapsed // 3600}h {(elapsed % 3600) // 60}m"
-                    elif elapsed >= 60:
-                        footer = f"Research time: {elapsed // 60}m {elapsed % 60}s"
-                    else:
-                        footer = f"Research time: {elapsed}s"
+                    footer = f"Research time: {_fmt_dur(elapsed)}"
                     try:
                         embed = _build_status_embed(state, gif=False)
                         embed.set_footer(text=footer)
