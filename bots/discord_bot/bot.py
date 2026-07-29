@@ -45,7 +45,9 @@ _h.setFormatter(_fmt)
 logger.addHandler(_h)
 logger.propagate = False
 
-bot = discord.Bot()
+intents = discord.Intents.default()
+intents.message_content = True
+bot = discord.Bot(intents=intents)
 
 # Per-user gate: user_id -> (task, thread)
 _active: dict[int, tuple[asyncio.Task, discord.Thread]] = {}
@@ -185,6 +187,33 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
     start_time = None
     upd_task = None
     brief_msg = None
+    prev_brief_msg = None
+    msg_task = None
+
+    def _check(m):
+        return m.channel.id == thread.id and m.author.id == uid
+
+    async def _listen():
+        nonlocal brief_msg, prev_brief_msg
+        try:
+            while not cancelled.is_set():
+                wt = asyncio.create_task(bot.wait_for("message", check=_check))
+                ct = asyncio.create_task(cancelled.wait())
+                done, pending = await asyncio.wait([wt, ct], return_when=asyncio.FIRST_COMPLETED)
+                for t in pending:
+                    t.cancel()
+                if wt in done and not wt.cancelled():
+                    msg = await wt
+                    logger.info("Listener captured message: %s", msg.content[:50])
+                    await inbox.put(msg.content)
+                    # New placeholder — old brief stays as reference
+                    prev_brief_msg = brief_msg
+                    try:
+                        brief_msg = await thread.send("**` Generating research question... `**")
+                    except Exception:
+                        pass
+        except Exception:
+            logger.warning("_listen crashed", exc_info=True)
 
     async def _start_updater():
         nonlocal upd_task
@@ -225,13 +254,8 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             # ----- ClarifyQuestion -----
             if isinstance(event, ClarifyQuestion):
                 clarify_embed = discord.Embed(title="Clarification Needed", description=event.question, color=_EMBED_COLOR)
-                try:
-                    await brief_msg.edit(content=None, embed=clarify_embed, view=None)
-                except Exception:
-                    brief_msg = await thread.send(embed=clarify_embed)
-
-                def _check(m):
-                    return m.channel.id == thread.id and m.author.id == uid
+                # Send new message — old brief stays as reference
+                brief_msg = await thread.send(embed=clarify_embed)
 
                 wt = asyncio.create_task(
                     bot.wait_for("message", check=_check, timeout=600)
@@ -265,6 +289,8 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
 
                 async def _start(interaction: discord.Interaction):
                     nonlocal status_msg, start_time
+                    if msg_task and not msg_task.done():
+                        msg_task.cancel()
                     bv.stop()  # cancel timeout timer so _bv_timeout doesn't fire later
                     await inbox.put("start")
                     await interaction.response.edit_message(view=None)
@@ -273,6 +299,8 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                     await _start_updater()
 
                 async def _cancel_brief(interaction: discord.Interaction):
+                    if msg_task and not msg_task.done():
+                        msg_task.cancel()
                     cancelled.set()
                     await inbox.put("cancel")
                     try:
@@ -281,6 +309,8 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                         pass
 
                 async def _bv_timeout():
+                    if msg_task and not msg_task.done():
+                        msg_task.cancel()
                     cancelled.set()
                     await inbox.put("cancel")
                     try:
@@ -299,11 +329,22 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                 bv.add_item(sb)
                 bv.add_item(cbb)
 
+                # Remove buttons from old brief if it exists
+                if prev_brief_msg:
+                    try:
+                        await prev_brief_msg.edit(view=None)
+                    except Exception:
+                        pass
+
                 brief_embed = discord.Embed(title="Research Question", description=event.brief, color=_EMBED_COLOR)
+                brief_embed.set_footer(text="Type a message to modify, or click Start.")
                 try:
                     await brief_msg.edit(content=None, embed=brief_embed, view=bv)
                 except Exception:
                     await thread.send(embed=brief_embed, view=bv)
+                if msg_task is None or msg_task.done():
+                    msg_task = asyncio.create_task(_listen())
+                    logger.info("Started message listener")
 
             # ----- SupervisorTick -----
             elif isinstance(event, SupervisorTick):
@@ -441,6 +482,8 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
         raise
     finally:
         cancelled.set()
+        if msg_task and not msg_task.done():
+            msg_task.cancel()
         if upd_task and not upd_task.done():
             upd_task.cancel()
 

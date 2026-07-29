@@ -11,7 +11,7 @@ from typing import AsyncIterator
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 
-from open_deep_research.deep_researcher import deep_researcher_builder, model_profile, _llm_config
+from open_deep_research.deep_researcher import deep_researcher_builder, model_profile, _llm_config, write_research_brief
 from open_deep_research.state import AgentState
 from open_deep_research.utils import get_api_key_for_model, strip_think_tags
 
@@ -292,8 +292,37 @@ async def research_stream(
                     continue
 
                 yield BriefReady(brief=research_brief)
-                # Wait for confirm/cancel signal from bot (bot puts into inbox)
+                # Wait for confirm/cancel or typed feedback from bot
                 signal = await inbox.get()
+                while signal not in ("cancel", "start"):
+                    # Typed feedback: append to messages, regenerate brief
+                    graph.update_state(config, {"messages": [
+                        HumanMessage(content=f"<prior_research_brief>\n{research_brief}\n</prior_research_brief>\n\n<user_feedback>\n{signal}\n</user_feedback>")
+                    ]})
+                    state = graph.get_state(config).values
+                    cmd = await write_research_brief(state, config)
+                    graph.update_state(config, cmd.update, as_node="write_research_brief")
+                    research_brief = cmd.update["research_brief"]
+                    # Drain queued feedback — if start/cancel arrived, skip yielding
+                    while not inbox.empty():
+                        peek = inbox.get_nowait()
+                        if peek == "cancel":
+                            yield Failed(error="Cancelled by user")
+                            return
+                        if peek == "start":
+                            signal = "start"
+                            break
+                        graph.update_state(config, {"messages": [
+                            HumanMessage(content=f"<prior_research_brief>\n{research_brief}\n</prior_research_brief>\n\n<user_feedback>\n{peek}\n</user_feedback>")
+                        ]})
+                        state = graph.get_state(config).values
+                        cmd = await write_research_brief(state, config)
+                        graph.update_state(config, cmd.update, as_node="write_research_brief")
+                        research_brief = cmd.update["research_brief"]
+                    if signal == "start":
+                        break
+                    yield BriefReady(brief=research_brief)
+                    signal = await inbox.get()
                 if signal == "cancel":
                     yield Failed(error="Cancelled by user")
                     return

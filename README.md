@@ -31,7 +31,7 @@ Fill in `.env`:
 | `OPENAI_BASE_URL` | Only needed for a non-OpenAI bridge or gateway |
 | `GROQ_API_KEY` | Summarizes research topics into one-line headers. Free tier at [groq.com](https://console.groq.com/) |
 
-Invite the bot with the `bot` and `applications.commands` scopes, then:
+Invite the bot with the `bot` and `applications.commands` scopes. Enable the **Message Content** privileged intent in the [Discord developer portal](https://discord.com/developers/applications) (Bot → Privileged Gateway Intents) — required for the bot to read clarification messages in threads.
 
 ```bash
 uv run python bots/discord_bot/bot.py
