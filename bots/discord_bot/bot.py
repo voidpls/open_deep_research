@@ -38,6 +38,12 @@ TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("research-bot")
 logger.setLevel(logging.INFO)
+_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+_h = logging.StreamHandler()
+_h.setLevel(logging.INFO)
+_h.setFormatter(_fmt)
+logger.addHandler(_h)
+logger.propagate = False
 
 bot = discord.Bot()
 
@@ -104,10 +110,32 @@ def _build_status_embed(state: dict, gif: bool = True) -> discord.Embed:
         bullets = "\n\n".join(f"- {s}" for s in summarized)
         if len(bullets) > 1024:
             bullets = bullets[:1021] + "..."
-        embed.add_field(name=f"❭ Research Phase {i}", value=bullets, inline=False)
+        name = f"❭ Research Phase {i}"
+        badges = []
+        durs = state.get("phase_durations", [])
+        if i <= len(durs) and durs[i - 1]:
+            badges.append(durs[i - 1])
+        elif i == len(state["phases"]) and state.get("phase") == "researching" and state.get("phase_start"):
+            badges.append(_fmt_dur(time.monotonic() - state["phase_start"]))
+        rounds = state.get("rounds_per_phase", [])
+        if i <= len(rounds) and rounds[i - 1]:
+            badges.append(f"{rounds[i - 1]} rounds")
+        if badges:
+            name += " (" + " · ".join(badges) + ")"
+        embed.add_field(name=name, value=bullets, inline=False)
     if state.get("phase") == "assessing":
         embed.add_field(name="❭ Analyzing Results", value="\u200b", inline=False)
     return embed
+
+
+def _fmt_dur(seconds: float) -> str:
+    s = int(seconds)
+    if s >= 3600:
+        return f"{s // 3600}h {(s % 3600) // 60}m"
+    elif s >= 60:
+        return f"{s // 60}m {s % 60}s"
+    else:
+        return f"{s}s"
 
 
 def _truncate(text: str, max_len: int) -> str:
@@ -129,8 +157,11 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
         "sources": 0,
         "phases": [],  # list of topic lists per phase
         "phase": "starting",
+        "phase_start": None,  # time.monotonic() when current phase entered
+        "phase_durations": [],  # str per phase, parallel to phases
+        "rounds_per_phase": [],  # int per phase, parallel to phases
     }
-    live = {"sources": 0}
+    live = {"sources": 0, "rounds": 0}
     last_tools_done_at = None
 
     # --- Cancel button (reusable) ---
@@ -153,9 +184,7 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
     report_msg = None
     start_time = None
     upd_task = None
-
-    # Placeholder message in thread — edited into research question embed
-    brief_msg = await thread.send("**` Generating research question... `**")
+    brief_msg = None
 
     async def _start_updater():
         nonlocal upd_task
@@ -165,7 +194,13 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             nonlocal _last_sig
             while not cancelled.is_set():
                 state["sources"] = live.get("sources") or state["sources"]
-                sig = (state["sources"], len(state["phases"]), state["phase"])
+                rounds = live.get("rounds", 0)
+                if state["phase"] == "researching" and state["rounds_per_phase"]:
+                    state["rounds_per_phase"][-1] = rounds
+                elapsed_bucket = 0
+                if state["phase"] == "researching" and state.get("phase_start"):
+                    elapsed_bucket = int(time.monotonic() - state["phase_start"])
+                sig = (state["sources"], len(state["phases"]), state["phase"], rounds, elapsed_bucket)
                 if sig != _last_sig:
                     _last_sig = sig
                     try:
@@ -181,13 +216,19 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
 
 
     try:
+        brief_msg = await thread.send("**` Generating research question... `**")
+
         async for event in research_stream(prompt, inbox, live=live):
             if cancelled.is_set():
                 break
 
             # ----- ClarifyQuestion -----
             if isinstance(event, ClarifyQuestion):
-                await thread.send(event.question)
+                clarify_embed = discord.Embed(title="Clarification Needed", description=event.question, color=_EMBED_COLOR)
+                try:
+                    await brief_msg.edit(content=None, embed=clarify_embed, view=None)
+                except Exception:
+                    brief_msg = await thread.send(embed=clarify_embed)
 
                 def _check(m):
                     return m.channel.id == thread.id and m.author.id == uid
@@ -213,6 +254,10 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
                     await inbox.put("cancel")
                     await thread.send("Timed out — cancelled.")
                     break
+
+                # New placeholder for next phase
+                brief_msg = await thread.send("**` Generating research question... `**")
+                continue
 
             # ----- BriefReady -----
             elif isinstance(event, BriefReady):
@@ -264,7 +309,10 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             elif isinstance(event, SupervisorTick):
                 if event.conduct_research_topics:
                     state["phase"] = "researching"
+                    state["phase_start"] = time.monotonic()
                     state["phases"].append(event.conduct_research_topics)
+                    state["phase_durations"].append("")
+                    state["rounds_per_phase"].append(0)
                     for t in event.conduct_research_topics:
                         await _summarize_topic(t)
                     if status_msg:
@@ -274,6 +322,10 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             elif isinstance(event, SupervisorToolsDone):
                 state["sources"] = event.sources
                 state["phase"] = "assessing"
+                if state["rounds_per_phase"]:
+                    state["rounds_per_phase"][-1] = live.get("rounds", 0)
+                if state.get("phase_start") and state["phase_durations"]:
+                    state["phase_durations"][-1] = _fmt_dur(time.monotonic() - state["phase_start"])
                 last_tools_done_at = time.monotonic()
                 if status_msg:
                     await status_msg.edit(embed=_build_status_embed(state), view=cancel_view)

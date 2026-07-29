@@ -83,32 +83,6 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60]
 
 
-_URL_RE = re.compile(r"https?://[^\s<>\"']+")
-
-
-def _extract_urls_from_text(text: str) -> set[str]:
-    if not text:
-        return set()
-    return {m.rstrip(".,);]!>") for m in _URL_RE.findall(text)}
-
-
-def _extract_urls_from_messages(messages) -> list[str]:
-    urls: set[str] = set()
-    for msg in messages:
-        content = getattr(msg, "content", None)
-        if content is None:
-            continue
-        urls |= _extract_urls_from_text(content if isinstance(content, str) else str(content))
-    return list(urls)
-
-
-def _extract_urls_from_raw_notes(raw_notes) -> set[str]:
-    urls: set[str] = set()
-    for note in raw_notes or []:
-        urls |= _extract_urls_from_text(note if isinstance(note, str) else str(note))
-    return urls
-
-
 _TLDR_PROMPT = """You write a TL;DR of a research report for a Discord message.
 
 Research brief (what was asked):
@@ -193,10 +167,15 @@ async def research_stream(
     async def _count_async(*args, **kwargs):
         search_results = await _orig_async(*args, **kwargs)
         found = set()
+        total, with_raw = 0, 0
         for response in search_results or []:
             for result in response.get("results") or []:
-                if url := result.get("url"):
+                total += 1
+                if result.get("raw_content") and (url := result.get("url")):
                     found.add(url)
+                    with_raw += 1
+        import logging
+        logging.getLogger("research-bot").debug("_count_async: %d/%d URLs with raw_content", with_raw, total)
         if found:
             seen_urls.update(found)
         if live is not None:
@@ -277,14 +256,7 @@ async def research_stream(
 
             # Case 1: Done — final_report present
             if final_report:
-                sources = list(
-                    set(
-                        _extract_urls_from_messages(
-                            state.get("supervisor_messages", []) + messages
-                        )
-                    )
-                    | _extract_urls_from_raw_notes(state.get("raw_notes", []))
-                )
+                sources = list(seen_urls)
                 report_id = secrets.token_urlsafe(6)
                 slug = _slugify(research_brief or prompt[:40])
                 report_path = str(REPORTS_DIR / f"{slug}-{report_id}.md")
