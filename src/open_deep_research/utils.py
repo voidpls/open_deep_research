@@ -1,6 +1,7 @@
 """Utility functions and helpers for the Deep Research agent."""
 
 import asyncio
+import json
 import logging
 import os
 import re
