@@ -287,6 +287,8 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
     
     # Exit if any termination condition is met
     if exceeded_allowed_iterations or no_tool_calls or research_complete_tool_call:
+        log.info("supervisor_tools: END exceeded=%s no_tool=%s complete=%s iters=%s",
+                 exceeded_allowed_iterations, no_tool_calls, research_complete_tool_call, research_iterations)
         return Command(
             goto=END,
             update={
@@ -323,7 +325,7 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
         try:
             # Limit concurrent research units to prevent resource exhaustion
             allowed_conduct_research_calls = conduct_research_calls[:configurable.max_concurrent_research_units]
-            overflow_conduct_research_calls = conduct_research_calls[configurable.max_concurrent_research_units]
+            overflow_conduct_research_calls = conduct_research_calls[configurable.max_concurrent_research_units:]
             
             log.info("supervisor_tools: gather start n=%s topics=%s",
                      len(allowed_conduct_research_calls),
@@ -386,6 +388,7 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
             )
         except Exception as e:
             # Handle research execution errors
+            log.error("supervisor_tools: unexpected error ending research: %s", repr(e))
             if is_token_limit_exceeded(e, configurable.research_model) or True:
                 # Token limit exceeded or other error - end research phase
                 return Command(
