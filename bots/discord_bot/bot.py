@@ -119,8 +119,8 @@ def _build_status_embed(state: dict, gif: bool = True) -> discord.Embed:
         if badges:
             name += " (" + " · ".join(badges) + ")"
         embed.add_field(name=name, value=bullets, inline=False)
-    if state.get("phase") == "assessing":
-        embed.add_field(name="❭ Analyzing Results", value="\u200b", inline=False)
+    if state.get("wrote"):
+        embed.add_field(name="❭ Writing Report", value="\u200b", inline=False)
     return embed
 
 
@@ -377,6 +377,7 @@ async def _run(bot, thread: discord.Thread, uid: int, prompt: str):
             # ----- ReportStarted -----
             elif isinstance(event, ReportStarted):
                 state["phase"] = "writing"
+                state["wrote"] = True
                 if upd_task:
                     upd_task.cancel()
                 report_msg = await thread.send("https://klipy.com/gifs/fire-writing")
