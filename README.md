@@ -33,6 +33,10 @@ Fill in `.env`:
 
 Invite the bot with the `bot` and `applications.commands` scopes. Enable the **Message Content** privileged intent in the [Discord developer portal](https://discord.com/developers/applications) (Bot → Privileged Gateway Intents) — required for the bot to read clarification messages in threads.
 
+Either give bot "Create Public Threads" permission, or invite your bot with this link (replace YOUR_BOT_ID):
+
+https://discord.com/oauth2/authorize?client_id=YOUR_BOT_ID&permissions=34359738368&integration_type=0&scope=bot+applications.commands
+
 ```bash
 uv run python bots/discord_bot/bot.py
 ```
